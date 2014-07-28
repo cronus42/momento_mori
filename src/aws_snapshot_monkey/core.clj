@@ -3,7 +3,8 @@
   (:require [clj-time.core :as tm]
             [clj-time.local :as loc]
             [clj-time.format :as fmt]
-            [clojure.tools.cli :as cli])
+            [clojure.tools.cli :as cli]
+            [clojure.tools.logging :as log])
   (:use [clj-time.coerce])
   (:use [amazonica.aws.ec2])
   (:use [clojure.pprint])
@@ -11,7 +12,6 @@
 
 ;;TODO: scheduler http://clojurequartz.info/
 ;;TODO: config file
-;;TODO: logging
 
 (defn get_volumes_in_use [] 
   "grab the aws volume-id's for in-use volumes"
@@ -47,7 +47,7 @@
 
 (defn snapshot_volumes [volumes]
   "snapshot a list of volumes"
-  (println "Snapshotting volumes")
+  (log/info "Snapshotting volumes: " volumes)
   (map (fn [m]
         (create-snapshot :volume-id m :Description "Snapshot Monkey"))
         volumes
