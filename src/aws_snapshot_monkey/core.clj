@@ -9,12 +9,17 @@
   (:use [clojure.pprint])
   (:use [clojure.set]))
 
+;;TODO: scheduler http://clojurequartz.info/
+;;TODO: config file
+;;TODO: logging
+
 (defn get_volumes_in_use [] 
   "grab the aws volume-id's for in-use volumes"
+  (into #{}
   (map 
     (fn [m] (get m :volume-id))
     (get (describe-volumes :state "in-use") :volumes)
-    ))
+    )))
 
 (defn get_snapshots_for_volumes [volumes]
   "fetch the snapshot-id's and volume-id's for given volumes"
@@ -23,6 +28,13 @@
     (get 
       (describe-snapshots :filters [{:name "volume-id" :values volumes}])
       :snapshots)))
+
+(defn get_snapshots []
+  ;;TODO: Make sure we actually own them
+  "fetch all the snapshots"
+  (into #{}
+        (map (fn [m] (get m :snapshot-id))
+               (get (describe-snapshots) :snapshots))))
 
 (defn filter_by_start_time [days_ago snapshots]
   "take a list of snapshots and return only those elements with a recent start
@@ -48,8 +60,9 @@
                   ["-d" "--days-old" "Maximum age of a snapshot" :default 60
                    :parse-fn #(Integer. %)])]
 
-  (def volumes_in_use (into #{} (get_volumes_in_use)))
+  (def volumes_in_use (get_volumes_in_use))
   (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
+  (def snaps_defunct (difference (get_snapshots) volumes_in_use))
   (def vols_with_recent_snaps 
     (into #{} 
           (keys 
