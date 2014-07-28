@@ -1,8 +1,6 @@
 (ns aws-snapshot-monkey.core
   (:gen-class)
   (:require [clj-time.core :as tm]
-            [clj-time.local :as loc]
-            [clj-time.format :as fmt]
             [clojure.tools.cli :as cli]
             [clojure.tools.logging :as log])
   (:use [clj-time.coerce])
@@ -16,10 +14,10 @@
 (defn get_volumes_in_use [] 
   "grab the aws volume-id's for in-use volumes"
   (into #{}
-  (map 
-    (fn [m] (get m :volume-id))
-    (get (describe-volumes :state "in-use") :volumes)
-    )))
+        (map 
+          (fn [m] (get m :volume-id))
+          (get (describe-volumes :state "in-use") :volumes)
+          )))
 
 (defn get_snapshots_for_volumes [volumes]
   "fetch the snapshot-id's and volume-id's for given volumes"
@@ -34,7 +32,7 @@
   "fetch all the snapshots"
   (into #{}
         (map (fn [m] (get m :snapshot-id))
-               (get (describe-snapshots) :snapshots))))
+             (get (describe-snapshots) :snapshots))))
 
 (defn filter_by_start_time [days_ago snapshots]
   "take a list of snapshots and return only those elements with a recent start
@@ -42,16 +40,16 @@
   ;;TODO: Make sure they are completed?
   (map (fn [m] 
          (if (tm/before? (-> days_ago tm/days tm/ago) (get m :start-time))
-          m ))
+           m ))
        snapshots))
 
 (defn snapshot_volumes [volumes]
   "snapshot a list of volumes"
   (log/info "Snapshotting volumes: " volumes)
   (map (fn [m]
-        (create-snapshot :volume-id m :Description "Snapshot Monkey"))
-        volumes
-        ))
+         (create-snapshot :volume-id m :Description "Snapshot Monkey"))
+       volumes
+       ))
 
 (defn -main [& args]
   "The main function"
@@ -60,19 +58,19 @@
                   ["-d" "--days-old" "Maximum age of a snapshot" :default 60
                    :parse-fn #(Integer. %)])]
 
-  (def volumes_in_use (get_volumes_in_use))
-  (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
-  (def snaps_defunct (difference (get_snapshots) volumes_in_use))
-  (def vols_with_recent_snaps 
-    (into #{} 
-          (keys 
-            (group-by :volume-id 
-                      (filter_by_start_time 
-                        (:days-old options) snaps_in_use)))))
-  (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
+    (def volumes_in_use (get_volumes_in_use))
+    (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
+    (def snaps_defunct (difference (get_snapshots) volumes_in_use))
+    (def vols_with_recent_snaps 
+      (into #{} 
+            (keys 
+              (group-by :volume-id 
+                        (filter_by_start_time 
+                          (:days-old options) snaps_in_use)))))
+    (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
 
-  ;; Snapshot the volumes that don't have recent snapshots
-  (snapshot_volumes vols_wo_snaps)
+    ;; Snapshot the volumes that don't have recent snapshots
+    (snapshot_volumes vols_wo_snaps)
 
-  ))
+    ))
 
