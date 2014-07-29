@@ -17,7 +17,6 @@
   (:use [clojure.walk]))
 
 
-;;TODO: scheduler http://clojurequartz.info/
 ;;TODO: config file
 
 (defn get_volumes_in_use [] 
@@ -83,6 +82,8 @@
   (let  [[options args banner]
          (cli/cli args
                   ["-d" "--days-old" "Maximum age of a snapshot" :default 60
+                   :parse-fn #(Integer. %)]
+                  ["-f" "--frequency" "Run frequency in minutes" :default 30
                    :parse-fn #(Integer. %)])]
     ;;set up the scheduler
     (qs/initialize)
@@ -94,8 +95,10 @@
           trigger (t/build
                     (t/with-identity (t/key "triggers.1"))
                     (t/start-now)
-                    (t/with-schedule (schedule
-                                       (cron-schedule "0 30 * * * ?"))))]
+                    (t/with-schedule 
+                      (schedule
+                        (cron-schedule 
+                          (str "0 " (:frequency options) " * * * ?")))))]
 
       (qs/schedule job trigger)
       )
