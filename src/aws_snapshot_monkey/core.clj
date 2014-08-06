@@ -33,15 +33,20 @@
   (map
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
     (get 
-      (describe-snapshots :filters [{:name "volume-id" :values volumes}])
+      (describe-snapshots 
+        :filters [{:name "volume-id" :values volumes}] :owner "self")
       :snapshots)))
 
 (defn get_snapshots []
   "fetch all the snapshots"
-  ;;TODO: Make sure we actually own them
   (into #{}
         (map (fn [m] (get m :snapshot-id))
-             (get (describe-snapshots) :snapshots))))
+             (get (describe-snapshots :owner "self") :snapshots))))
+
+(defn prune_snapshots [ daysago ]
+  "prune snapshots older than daysago"
+
+  )
 
 (defn filter_by_start_time [days_ago snapshots]
   "take a list of snapshots and return only those elements with a recent start
