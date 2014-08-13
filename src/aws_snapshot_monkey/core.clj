@@ -13,20 +13,35 @@
             [amazonica.core :refer [with-credential defcredential]])
   (:use [clj-time.coerce])
   (:use [amazonica.aws.ec2])
+  (:use [amazonica.aws.identitymanagement])
+  (:use [clojure.string :only (split)])
   (:use [clojure.pprint])
   (:use [clojure.set])
   (:use [clojure.walk]))
 
 ;;TODO: specl testing
 ;;TODO: config file
+;;TODO: paging requests
+
+(defn get_account_id []
+  ((split (get-in (get-user) [:user :arn]) #":") 4)
+  )
+
+(defn derive_set [seqofhashes keytoget]
+  (into #{}
+        (map
+          (fn [m] (get m keytoget))
+          seqofhashes
+  )))
+
 
 (defn get_volumes_in_use [] 
   "grab the aws volume-id's for in-use volumes"
-  (into #{}
-        (map 
-          (fn [m] (get m :volume-id))
-          (get (describe-volumes :state "in-use") :volumes)
-          )))
+  (get (describe-volumes 
+         :filters [{:name "attachment.status" :values ["attached"]}
+                   {:name "status" :values ["in-use"]}] 
+         :owners ["self"]) :volumes)
+  )
 
 (defn get_snapshots_for_volumes [volumes]
   "fetch the snapshot-id's and volume-id's for given volumes"
@@ -34,18 +49,24 @@
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
     (get 
       (describe-snapshots 
-        :filters [{:name "volume-id" :values volumes}] :owner "self")
+        :filters [{:name "volume-id" :values volumes}
+                  {:name "owner-id" :values [(get_account_id)]}] )
       :snapshots)))
 
 (defn get_snapshots []
   "fetch all the snapshots"
-  (into #{}
-        (map (fn [m] (get m :snapshot-id))
-             (get (describe-snapshots :owner "self") :snapshots))))
+  (map
+    (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
+    (get 
+      (describe-snapshots :filters [{:name "owner-id" :values [(get_account_id)]}])
+      :snapshots)))
 
-(defn prune_snapshots [ daysago ]
-  "prune snapshots older than daysago"
-
+(defn prune_snapshots [snapshots]
+  "prune snapshots"
+   (log/info "Deleting snapshots: " snapshots)
+  (map (fn [m]
+         (delete-snapshot :snapshot-id m))
+       )
   )
 
 (defn filter_by_start_time [days_ago snapshots]
@@ -68,9 +89,11 @@
 
 (defjob snapshot_volumes_job [ctx]
   (let [options (keywordize-keys (qc/from-job-data ctx))]
-    (def volumes_in_use (get_volumes_in_use))
+    (def volumes_in_use (derive_set (get_volumes_in_use) :volume-id))
     (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
-    (def snaps_defunct (difference (get_snapshots) volumes_in_use))
+    (def snaps_defunct (difference
+                         (derive_set (get_snapshots) :snapshot-id) 
+                         (derive_set snaps_in_use :snapshot-id)))
     (def vols_with_recent_snaps 
       (into #{} 
             (keys 
@@ -79,7 +102,9 @@
                           (:days-old options) snaps_in_use)))))
     (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
 
-    (log/debug (snapshot_volumes vols_wo_snaps) )
+    ;;this log is necessary otherwise nothing actually happens
+    (log/debug (snapshot_volumes vols_wo_snaps))
+    (log/debug (prune_snapshots  snaps_defunct))
 
     ))
 
@@ -119,7 +144,7 @@
                     (t/with-schedule 
                       (schedule
                         (cron-schedule 
-                          (str "0 */" (:frequency options) " * * * ?")))))]
+                          (str "0 0/" (:frequency options) " * * * ?")))))]
 
       (qs/schedule job trigger)
       )
