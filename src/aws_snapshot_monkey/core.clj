@@ -21,7 +21,7 @@
 
 ;;TODO: specl testing
 ;;TODO: config file
-;;TODO: filter out snapshots that have registered amis
+;;TODO: handle Request limit exceeded
 
 (defn get_account_id []
   ((split (get-in (get-user) [:user :arn]) #":") 4)
@@ -71,13 +71,12 @@
   (map
     (fn [m] (select-keys m [:image-id :block-device-mappings :name]))
     (get
-      (describe-images :owners ["self"] 
-                       :filters [{:name "root-device-type" :values ["ebs"]}])
+      (describe-images :owners ["self"] )
       :images)))
 
 (defn prune_snapshots [snapshots]
   "prune snapshots"
-    (log/info "Deleting snapshots: " snapshots)
+    (log/debug "Deleting snapshots: " snapshots)
     (map (fn [m]
            (delete-snapshot :snapshot-id m))
          snapshots
@@ -111,10 +110,12 @@
     (def snaps_defunct
       (difference snaps_wo_vols
                   (into #{}
-                  (map #(get-in % [:ebs :snapshot-id])
-                       (map #(first %) 
-                            (map #(get % :block-device-mappings) (get_images))))
-                  )))
+                        (map #(get-in % [:ebs :snapshot-id])
+                             (flatten 
+                                  (map 
+                                    #(get % :block-device-mappings) 
+                                    (get_images))))
+                        )))
     (def vols_with_recent_snaps 
       (into #{} 
             (keys 
