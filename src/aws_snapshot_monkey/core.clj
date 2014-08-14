@@ -17,11 +17,12 @@
   (:use [clojure.string :only (split)])
   (:use [clojure.pprint])
   (:use [clojure.set])
-  (:use [clojure.walk]))
+  (:use [clojure.walk])
+  (:use [robert.bruce :only [try-try-again]])
+  )
 
 ;;TODO: specl testing
 ;;TODO: config file
-;;TODO: handle Request limit exceeded
 
 (defn get_account_id []
   ((split (get-in (get-user) [:user :arn]) #":") 4)
@@ -77,8 +78,8 @@
 (defn prune_snapshots [snapshots]
   "prune snapshots"
     (log/debug "Deleting snapshots: " snapshots)
-    (map (fn [m]
-           (delete-snapshot :snapshot-id m))
+    (map (fn [m] (try-try-again
+             delete-snapshot :snapshot-id m))
          snapshots
          ))
 
@@ -93,11 +94,10 @@
 (defn snapshot_volumes [volumes]
   "snapshot a list of volumes"
   (log/debug "Snapshotting volumes: " volumes)
-  (map (fn [m]
-         (create-snapshot :volume-id m :Description "Snapshot Monkey"))
+  (map (fn [m] (try-try-again 
+         create-snapshot :volume-id m :Description "Snapshot Monkey"))
        volumes
-       )
-  )
+       ))
 
 (defjob snapshot_volumes_job [ctx]
   (let [options (keywordize-keys (qc/from-job-data ctx))]

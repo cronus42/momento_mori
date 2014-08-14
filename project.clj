@@ -7,7 +7,8 @@
                  [org.clojure/tools.cli "0.2.4"][clj-time "0.7.0"]
                  [org.clojure/tools.logging "0.3.0"]
                  [org.slf4j/slf4j-simple "1.6.1"]
-                 [clojurewerkz/quartzite "1.2.0"]]
+                 [clojurewerkz/quartzite "1.2.0"]
+                 [robert/bruce "0.7.1"]]
   :main ^:skip-aot aws-snapshot-monkey.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})
