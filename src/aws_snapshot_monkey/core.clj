@@ -7,8 +7,8 @@
             [clojurewerkz.quartzite.jobs :as j]
             [clojurewerkz.quartzite.jobs :refer [defjob]]
             [clojurewerkz.quartzite.triggers :as t]
-            [clojurewerkz.quartzite.schedule.cron 
-             :refer [schedule cron-schedule]]
+            [clojurewerkz.quartzite.schedule.calendar-interval :refer 
+             [schedule with-interval-in-minutes]]
             [clojurewerkz.quartzite.conversion :as qc]
             [amazonica.core :refer [with-credential defcredential]])
   (:use [clj-time.coerce])
@@ -21,7 +21,7 @@
 
 ;;TODO: specl testing
 ;;TODO: config file
-;;TODO: paging requests
+;;TODO: filter out snapshots that have registered amis
 
 (defn get_account_id []
   ((split (get-in (get-user) [:user :arn]) #":") 4)
@@ -32,7 +32,7 @@
         (map
           (fn [m] (get m keytoget))
           seqofhashes
-  )))
+          )))
 
 
 (defn get_volumes_in_use [] 
@@ -45,13 +45,17 @@
 
 (defn get_snapshots_for_volumes [volumes]
   "fetch the snapshot-id's and volume-id's for given volumes"
-  (map
-    (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
-    (get 
-      (describe-snapshots 
-        :filters [{:name "volume-id" :values volumes}
-                  {:name "owner-id" :values [(get_account_id)]}] )
-      :snapshots)))
+  (flatten
+    ;;aws will only accept 200 filter args at a time
+    (for [part (into [] (partition-all 190 volumes))]
+      (map
+        (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
+        (get 
+          (describe-snapshots 
+            :filters [{:name "volume-id" :values part}
+                      {:name "owner-id" :values [(get_account_id)]}] )
+      :snapshots))
+    )))
 
 (defn get_snapshots []
   "fetch all the snapshots"
@@ -63,16 +67,16 @@
 
 (defn prune_snapshots [snapshots]
   "prune snapshots"
-   (log/info "Deleting snapshots: " snapshots)
+  (log/info "Deleting snapshots: " snapshots)
   (map (fn [m]
          (delete-snapshot :snapshot-id m))
+       snapshots
        )
   )
 
 (defn filter_by_start_time [days_ago snapshots]
   "take a list of snapshots and return only those elements with a recent start
   time"
-  ;;TODO: Make sure they are completed?
   (map (fn [m] 
          (if (tm/before? (-> days_ago tm/days tm/ago) (get m :start-time))
            m ))
@@ -80,7 +84,7 @@
 
 (defn snapshot_volumes [volumes]
   "snapshot a list of volumes"
-  (log/info "Snapshotting volumes: " volumes)
+  (log/debug "Snapshotting volumes: " volumes)
   (map (fn [m]
          (create-snapshot :volume-id m :Description "Snapshot Monkey"))
        volumes
@@ -89,6 +93,7 @@
 
 (defjob snapshot_volumes_job [ctx]
   (let [options (keywordize-keys (qc/from-job-data ctx))]
+    (log/info "Running scheduled job")
     (def volumes_in_use (derive_set (get_volumes_in_use) :volume-id))
     (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
     (def snaps_defunct (difference
@@ -101,11 +106,11 @@
                         (filter_by_start_time 
                           (:days-old options) snaps_in_use)))))
     (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
-
-    ;;this log is necessary otherwise nothing actually happens
-    (log/debug (snapshot_volumes vols_wo_snaps))
-    (log/debug (prune_snapshots  snaps_defunct))
-
+    (log/info "Found " (count vols_wo_snaps) " volumes to snapshot")
+    (dorun (snapshot_volumes vols_wo_snaps))
+    (log/info "Found " (count snaps_defunct) " snapshots to delete")
+    (dorun (prune_snapshots snaps_defunct))
+    (log/info "Run finished") 
     ))
 
 (defn -main [& args]
@@ -130,6 +135,7 @@
     (defcredential aws_access_key_id aws_secret_key (:region options))
 
 
+    (log/info "Executing in account" (get_account_id))
     ;;set up the scheduler
     (qs/initialize)
     (qs/start)
@@ -143,8 +149,9 @@
                     (t/start-now)
                     (t/with-schedule 
                       (schedule
-                        (cron-schedule 
-                          (str "0 0/" (:frequency options) " * * * ?")))))]
+                        (with-interval-in-minutes (:frequency options))
+                        )))]
+
 
       (qs/schedule job trigger)
       )
