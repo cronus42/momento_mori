@@ -62,8 +62,18 @@
   (map
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
     (get 
-      (describe-snapshots :filters [{:name "owner-id" :values [(get_account_id)]}])
+      (describe-snapshots 
+        :filters [{:name "owner-id" :values [(get_account_id)]}])
       :snapshots)))
+
+(defn get_images []
+  "fetch all the images"
+  (map
+    (fn [m] (select-keys m [:image-id :block-device-mappings :name]))
+    (get
+      (describe-images :owners ["self"] 
+                       :filters [{:name "root-device-type" :values ["ebs"]}])
+      :images)))
 
 (defn prune_snapshots [snapshots]
   "prune snapshots"
@@ -95,9 +105,16 @@
     (log/info "Running scheduled job")
     (def volumes_in_use (derive_set (get_volumes_in_use) :volume-id))
     (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
-    (def snaps_defunct (difference
+    (def snaps_wo_vols (difference
                          (derive_set (get_snapshots) :snapshot-id) 
                          (derive_set snaps_in_use :snapshot-id)))
+    (def snaps_defunct
+      (difference snaps_wo_vols
+                  (into #{}
+                  (map #(get-in % [:ebs :snapshot-id])
+                       (map #(first %) 
+                            (map #(get % :block-device-mappings) (get_images))))
+                  )))
     (def vols_with_recent_snaps 
       (into #{} 
             (keys 
