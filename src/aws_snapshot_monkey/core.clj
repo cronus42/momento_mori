@@ -67,12 +67,11 @@
 
 (defn prune_snapshots [snapshots]
   "prune snapshots"
-  (log/info "Deleting snapshots: " snapshots)
-  (map (fn [m]
-         (delete-snapshot :snapshot-id m))
-       snapshots
-       )
-  )
+    (log/info "Deleting snapshots: " snapshots)
+    (map (fn [m]
+           (delete-snapshot :snapshot-id m))
+         snapshots
+         ))
 
 (defn filter_by_start_time [days_ago snapshots]
   "take a list of snapshots and return only those elements with a recent start
@@ -108,8 +107,10 @@
     (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
     (log/info "Found " (count vols_wo_snaps) " volumes to snapshot")
     (dorun (snapshot_volumes vols_wo_snaps))
-    (log/info "Found " (count snaps_defunct) " snapshots to delete")
-    (dorun (prune_snapshots snaps_defunct))
+    (when (:prune options)
+      (log/info "Found " (count snaps_defunct) " snapshots to delete")
+      (dorun (prune_snapshots snaps_defunct))
+      )
     (log/info "Run finished") 
     ))
 
@@ -122,7 +123,17 @@
                    :parse-fn #(Integer. %)]
                   ["-f" "--frequency" "Run frequency in minutes" :default 30
                    :parse-fn #(Integer. %)]
-                  ["-r" "--region" "AWS Region" :default "us-west-2"])]
+                  ["-r" "--region" "AWS Region" :default "us-west-2"
+                   ]
+                  ["-p" "--prune" "Prune orphaned snaps" :default false 
+                   :flag true] 
+                  ["-h" "--help" "Help" :default false :flag true]
+                  )]
+
+    (when (:help options)
+            (println banner)
+      (System/exit 0)
+      )
 
     ;;Dig the credentials out of JDK
     (def aws_access_key_id 
