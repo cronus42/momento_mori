@@ -24,6 +24,11 @@
 ;;TODO: specl testing
 ;;TODO: config file
 
+(defn handler [request]
+    {:status 200
+        :headers {"Content-Type" "text/html"}
+        :body "I am Snapshot Monkey!"})
+
 (defn get_account_id []
   ((split (get-in (get-user) [:user :arn]) #":") 4)
   )
