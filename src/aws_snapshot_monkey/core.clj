@@ -127,6 +127,7 @@
               (group-by :volume-id 
                         (filter_by_start_time 
                           (:days-old options) snaps_in_use)))))
+
     (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
     (log/info "Found " (count vols_wo_snaps) " volumes to snapshot")
     (dorun (snapshot_volumes vols_wo_snaps))
@@ -159,14 +160,15 @@
       )
 
     ;;Dig the credentials out of JDK
-    (def aws_access_key_id 
-      (.getAWSAccessKeyId 
-        (.getCredentials (amazonica.core/get-credentials :cred))))
-    (def aws_secret_key 
-      (.getAWSSecretKey 
-        (.getCredentials (amazonica.core/get-credentials :cred))))
+    
+    ;(def aws_access_key_id 
+    ;  (.getAWSAccessKeyId 
+    ;    (.getCredentials (amazonica.core/get-credentials :cred))))
+    ;(def aws_secret_key 
+    ;  (.getAWSSecretKey 
+    ;    (.getCredentials (amazonica.core/get-credentials :cred))))
 
-    (defcredential aws_access_key_id aws_secret_key (:region options))
+    ;(defcredential aws_access_key_id aws_secret_key (:region options))
 
 
     (log/info "Executing in account" (get_account_id))
