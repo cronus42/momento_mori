@@ -25,9 +25,9 @@
 ;;TODO: config file
 
 (defn handler [request]
-    {:status 200
-        :headers {"Content-Type" "text/html"}
-        :body "I am Snapshot Monkey!"})
+  {:status 200
+   :headers {"Content-Type" "text/html"}
+   :body "I am Snapshot Monkey!"})
 
 (defn get_account_id []
   ;((split (get-in (get-user) [:user :arn]) #":") 4)
@@ -41,16 +41,15 @@
           seqofhashes
           )))
 
-
-(defn get_volumes_in_use [] 
+(defn get_volumes_in_use [region] 
   "grab the aws volume-id's for in-use volumes"
-  (get (describe-volumes 
-         :filters [{:name "attachment.status" :values ["attached"]}
-                   {:name "status" :values ["in-use"]}] 
-         :owners ["self"]) :volumes)
+  (get (describe-volumes {:endpoint region}
+                         :filters [{:name "attachment.status" :values ["attached"]}
+                                   {:name "status" :values ["in-use"]}] 
+                         :owners ["self"]) :volumes)
   )
 
-(defn get_snapshots_for_volumes [volumes]
+(defn get_snapshots_for_volumes [region volumes]
   "fetch the snapshot-id's and volume-id's for given volumes"
   (flatten
     ;;aws will only accept 200 filter args at a time
@@ -58,36 +57,36 @@
       (map
         (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
         (get 
-          (describe-snapshots 
-            :filters [{:name "volume-id" :values part}
-                      {:name "owner-id" :values [(get_account_id)]}] )
-      :snapshots))
-    )))
+          (describe-snapshots {:endpoint region} 
+                              :filters [{:name "volume-id" :values part}
+                                        {:name "owner-id" :values [(get_account_id)]}] )
+          :snapshots))
+      )))
 
-(defn get_snapshots []
+(defn get_snapshots [region]
   "fetch all the snapshots"
   (map
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
     (get 
-      (describe-snapshots 
-        :filters [{:name "owner-id" :values [(get_account_id)]}])
+      (describe-snapshots {:endpoint region}
+                          :filters [{:name "owner-id" :values [(get_account_id)]}])
       :snapshots)))
 
-(defn get_images []
+(defn get_images [region]
   "fetch all the images"
   (map
     (fn [m] (select-keys m [:image-id :block-device-mappings :name]))
     (get
-      (describe-images :owners ["self"] )
+      (describe-images {:endpoint region} :owners ["self"] )
       :images)))
 
-(defn prune_snapshots [snapshots]
+(defn prune_snapshots [region snapshots]
   "prune snapshots"
-    (log/debug "Deleting snapshots: " snapshots)
-    (map (fn [m] (try-try-again
-             delete-snapshot :snapshot-id m))
-         snapshots
-         ))
+  (log/debug "Deleting snapshots: " snapshots)
+  (map (fn [m] (try-try-again
+                 delete-snapshot {:endpoint region} :snapshot-id m))
+       snapshots
+       ))
 
 (defn filter_by_start_time [days_ago snapshots]
   "take a list of snapshots and return only those elements with a recent start
@@ -97,30 +96,34 @@
            m ))
        snapshots))
 
-(defn snapshot_volumes [volumes]
+(defn snapshot_volumes [region volumes]
   "snapshot a list of volumes"
   (log/debug "Snapshotting volumes: " volumes)
   (map (fn [m] (try-try-again 
-         create-snapshot :volume-id m :Description "Snapshot Monkey"))
+                 create-snapshot {:endpoint region} 
+                 :volume-id m :Description "Snapshot Monkey"))
        volumes
        ))
 
 (defjob snapshot_volumes_job [ctx]
   (let [options (keywordize-keys (qc/from-job-data ctx))]
     (log/info "Running scheduled job")
-    (def volumes_in_use (derive_set (get_volumes_in_use) :volume-id))
-    (def snaps_in_use (get_snapshots_for_volumes volumes_in_use))
+    (def volumes_in_use (derive_set 
+                          (get_volumes_in_use (:region options)) :volume-id))
+    (def snaps_in_use (get_snapshots_for_volumes 
+                        (:region options) volumes_in_use))
     (def snaps_wo_vols (difference
-                         (derive_set (get_snapshots) :snapshot-id) 
-                         (derive_set snaps_in_use :snapshot-id)))
+                         (derive_set 
+                           (get_snapshots (:region options)) :snapshot-id) 
+                           (derive_set snaps_in_use :snapshot-id)))
     (def snaps_defunct
       (difference snaps_wo_vols
                   (into #{}
                         (map #(get-in % [:ebs :snapshot-id])
                              (flatten 
-                                  (map 
-                                    #(get % :block-device-mappings) 
-                                    (get_images))))
+                               (map 
+                                 #(get % :block-device-mappings) 
+                                 (get_images (:region options)))))
                         )))
     (def vols_with_recent_snaps 
       (into #{} 
@@ -131,10 +134,10 @@
 
     (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
     (log/info "Found " (count vols_wo_snaps) " volumes to snapshot")
-    (dorun (snapshot_volumes vols_wo_snaps))
+    (dorun (snapshot_volumes (:region options) vols_wo_snaps))
     (when (:prune options)
       (log/info "Found " (count snaps_defunct) " snapshots to delete")
-      (dorun (prune_snapshots snaps_defunct))
+      (dorun (prune_snapshots (:region options) snaps_defunct))
       )
     (log/info "Run finished") 
     ))
@@ -156,20 +159,9 @@
                   )]
 
     (when (:help options)
-            (println banner)
+      (println banner)
       (System/exit 0)
       )
-
-    ;;Dig the credentials out of JDK
-    
-    ;(def aws_access_key_id 
-    ;  (.getAWSAccessKeyId 
-    ;    (.getCredentials (amazonica.core/get-credentials :cred))))
-    ;(def aws_secret_key 
-    ;  (.getAWSSecretKey 
-    ;    (.getCredentials (amazonica.core/get-credentials :cred))))
-
-    ;(defcredential aws_access_key_id aws_secret_key (:region options))
 
 
     (log/info "Executing in account" (get_account_id))
