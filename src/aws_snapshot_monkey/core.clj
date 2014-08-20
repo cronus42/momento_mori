@@ -30,7 +30,8 @@
         :body "I am Snapshot Monkey!"})
 
 (defn get_account_id []
-  ((split (get-in (get-user) [:user :arn]) #":") 4)
+  ;((split (get-in (get-user) [:user :arn]) #":") 4)
+  (get (first (get (describe-instances) :reservations)) :owner-id)
   )
 
 (defn derive_set [seqofhashes keytoget]
