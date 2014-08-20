@@ -25,13 +25,13 @@
 
 ;;TODO: specl testing
 ;;TODO: health check
-;;TODO: region discovery
+;;TODO: config for backup freq
 
 (defn handler [request]
   "handles http requests"
   {:status 200
    :headers {"Content-Type" "text/html"}
-   :body "I am Snapshot Monkey!"})
+   :body "I am Snapshot Monkey!\n"})
 
 (defn get_region []
   "queries the metadata api for the region"
@@ -39,9 +39,8 @@
          (drop-last
            (:body
              (http-client/get
-             "http://169.254.169.254/latest/meta-data/placement/availability-zone"
-             {:debug true}))
-           )))
+               "http://169.254.169.254/latest/meta-data/placement/availability-zone"
+               )))))
 
 (defn get_account_id [region]
   "fetches the aws account id from describe-instances (hacky)"
@@ -54,7 +53,7 @@
   )
 
 (defn derive_set [seqofhashes keytoget]
-  "Turns a maps into a set for a given key"
+  "Turns a map into a set for a given key"
   (into #{}
         (map
           (fn [m] (get m keytoget))
@@ -64,8 +63,9 @@
 (defn get_volumes_in_use [region] 
   "grab the aws volume-id's for in-use volumes"
   (get (describe-volumes {:endpoint region}
-                         :filters [{:name "attachment.status" :values ["attached"]}
-                                   {:name "status" :values ["in-use"]}] 
+                         :filters 
+                         [{:name "attachment.status" :values ["attached"]}
+                          {:name "status" :values ["in-use"]}] 
                          :owners ["self"]) :volumes)
   )
 
@@ -90,8 +90,10 @@
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
     (get 
       (describe-snapshots {:endpoint region}
-                          :filters [{:name "owner-id" :values [
-                                      (get_account_id region)]}])
+                          :filters 
+                          [{:name "owner-id"
+                            :values [
+                                     (get_account_id region)]}])
       :snapshots)))
 
 (defn get_images [region]
@@ -200,12 +202,15 @@
     (qs/start)
     (log/info "Starting snapshot job with frequency of " (:frequency options))
     (let [job (j/build
+                ;;run this job
                 (j/of-type snapshot_volumes_job)
                 (j/using-job-data options)
+                ;;call it this
                 (j/with-identity (j/key "jobs.snapshot_volumes")))
           trigger (t/build
                     (t/with-identity (t/key "triggers.1"))
                     (t/start-now)
+                    ;; do it every f minutes
                     (t/with-schedule 
                       (schedule
                         (with-interval-in-minutes (:frequency options))
