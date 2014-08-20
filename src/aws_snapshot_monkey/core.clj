@@ -37,15 +37,17 @@
   "queries the metadata api for the region"
   (apply str
          (drop-last
-           (http-client/get
-             "http://169.254.169.254/latest/meta-data/placement/availability-zone")  
+           (:body
+             (http-client/get
+             "http://169.254.169.254/latest/meta-data/placement/availability-zone"
+             {:debug true}))
            )))
 
 (defn get_account_id []
   "fetches the aws account id from describe-instances (hacky)"
   ;alternate stupid method
   ;((split (get-in (get-user) [:user :arn]) #":") 4)
-  (get (first (get (describe-instances) :reservations)) :owner-id)
+  (get (first (get (describe-instances {:endpoint region}) :reservations)) :owner-id)
   )
 
 (defn derive_set [seqofhashes keytoget]
