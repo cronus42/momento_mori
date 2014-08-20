@@ -43,11 +43,14 @@
              {:debug true}))
            )))
 
-(defn get_account_id []
+(defn get_account_id [region]
   "fetches the aws account id from describe-instances (hacky)"
   ;alternate stupid method
   ;((split (get-in (get-user) [:user :arn]) #":") 4)
-  (get (first (get (describe-instances {:endpoint region}) :reservations)) :owner-id)
+  (get 
+    (first 
+      (get 
+        (describe-instances {:endpoint region}) :reservations)) :owner-id)
   )
 
 (defn derive_set [seqofhashes keytoget]
@@ -76,7 +79,8 @@
         (get 
           (describe-snapshots {:endpoint region} 
                               :filters [{:name "volume-id" :values part}
-                                        {:name "owner-id" :values [(get_account_id)]}] )
+                                        {:name "owner-id" :values 
+                                         [(get_account_id region)]}] )
           :snapshots))
       )))
 
@@ -86,7 +90,8 @@
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
     (get 
       (describe-snapshots {:endpoint region}
-                          :filters [{:name "owner-id" :values [(get_account_id)]}])
+                          :filters [{:name "owner-id" :values [
+                                      (get_account_id region)]}])
       :snapshots)))
 
 (defn get_images [region]
@@ -130,6 +135,8 @@
         (get_region)
         (:region options)
         ))
+    (log/info "Executing in account" (get_account_id region))
+    (log/info "Executing in region" region)
     (def volumes_in_use (derive_set 
                           (get_volumes_in_use region) :volume-id))
     (def snaps_in_use (get_snapshots_for_volumes 
@@ -187,7 +194,6 @@
       (System/exit 0)
       )
 
-    (log/info "Executing in account" (get_account_id))
 
     ;;set up the scheduler
     (qs/initialize)
