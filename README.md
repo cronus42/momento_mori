@@ -11,12 +11,17 @@ You need http://leiningen.org/
 
     $ java -jar aws_snapshot_monkey-0.1.0-standalone.jar [args]
 
-## Options
+    Switches                 Default  Desc                      
+    --------                 -------  ----                      
+    -d, --days-old           5        Maximum age of a snapshot 
+    -f, --frequency          30       Run frequency in minutes  
+    -r, --region             auto     AWS Region                
+    -p, --no-prune, --prune  true     Prune orphaned snaps      
+    -h, --no-help, --help    false    Help   
 
-None atm
+## Notes
 
-## Examples
-
+The region flag is necessary if you are not on an aws instance
 
 ### Bugs
 

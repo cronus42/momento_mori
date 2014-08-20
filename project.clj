@@ -11,6 +11,7 @@
                  [org.clojure/tools.logging "0.3.0"]
                  [org.slf4j/slf4j-simple "1.6.1"]
                  [clojurewerkz/quartzite "1.2.0"]
+                 [clj-http "1.0.0"]
                  [robert/bruce "0.7.1"]]
   :main ^:skip-aot aws-snapshot-monkey.core
   :target-path "target/%s"

@@ -2,6 +2,7 @@
   (:gen-class)
   (:require [clj-time.core :as tm]
             [clojure.tools.cli :as cli]
+            [clj-http.client :as http-client]
             [clojure.tools.logging :as log]
             [clojurewerkz.quartzite.scheduler :as qs]
             [clojurewerkz.quartzite.jobs :as j]
@@ -10,7 +11,8 @@
             [clojurewerkz.quartzite.schedule.calendar-interval :refer 
              [schedule with-interval-in-minutes]]
             [clojurewerkz.quartzite.conversion :as qc]
-            [amazonica.core :refer [with-credential defcredential]])
+            [amazonica.core :refer [with-credential defcredential]]
+            )
   (:use [clj-time.coerce])
   (:use [amazonica.aws.ec2])
   (:use [amazonica.aws.identitymanagement])
@@ -22,19 +24,32 @@
   )
 
 ;;TODO: specl testing
-;;TODO: config file
+;;TODO: health check
+;;TODO: region discovery
 
 (defn handler [request]
+  "handles http requests"
   {:status 200
    :headers {"Content-Type" "text/html"}
    :body "I am Snapshot Monkey!"})
 
+(defn get_region []
+  "queries the metadata api for the region"
+  (apply str
+         (drop-last
+           (http-client/get
+             "http://169.254.169.254/latest/meta-data/placement/availability-zone")  
+           )))
+
 (defn get_account_id []
+  "fetches the aws account id from describe-instances (hacky)"
+  ;alternate stupid method
   ;((split (get-in (get-user) [:user :arn]) #":") 4)
   (get (first (get (describe-instances) :reservations)) :owner-id)
   )
 
 (defn derive_set [seqofhashes keytoget]
+  "Turns a maps into a set for a given key"
   (into #{}
         (map
           (fn [m] (get m keytoget))
@@ -108,14 +123,19 @@
 (defjob snapshot_volumes_job [ctx]
   (let [options (keywordize-keys (qc/from-job-data ctx))]
     (log/info "Running scheduled job")
+    (def region
+      (if (= (:region options) "auto")
+        (get_region)
+        (:region options)
+        ))
     (def volumes_in_use (derive_set 
-                          (get_volumes_in_use (:region options)) :volume-id))
+                          (get_volumes_in_use region) :volume-id))
     (def snaps_in_use (get_snapshots_for_volumes 
-                        (:region options) volumes_in_use))
+                        region volumes_in_use))
     (def snaps_wo_vols (difference
                          (derive_set 
-                           (get_snapshots (:region options)) :snapshot-id) 
-                           (derive_set snaps_in_use :snapshot-id)))
+                           (get_snapshots region) :snapshot-id) 
+                         (derive_set snaps_in_use :snapshot-id)))
     (def snaps_defunct
       (difference snaps_wo_vols
                   (into #{}
@@ -123,8 +143,8 @@
                              (flatten 
                                (map 
                                  #(get % :block-device-mappings) 
-                                 (get_images (:region options)))))
-                        )))
+                                 (get_images region)))))))
+
     (def vols_with_recent_snaps 
       (into #{} 
             (keys 
@@ -134,10 +154,10 @@
 
     (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
     (log/info "Found " (count vols_wo_snaps) " volumes to snapshot")
-    (dorun (snapshot_volumes (:region options) vols_wo_snaps))
+    (dorun (snapshot_volumes region vols_wo_snaps))
     (when (:prune options)
       (log/info "Found " (count snaps_defunct) " snapshots to delete")
-      (dorun (prune_snapshots (:region options) snaps_defunct))
+      (dorun (prune_snapshots region snaps_defunct))
       )
     (log/info "Run finished") 
     ))
@@ -151,20 +171,22 @@
                    :parse-fn #(Integer. %)]
                   ["-f" "--frequency" "Run frequency in minutes" :default 30
                    :parse-fn #(Integer. %)]
-                  ["-r" "--region" "AWS Region" :default "us-west-2"
+                  ["-r" "--region" "AWS Region" :default "auto"
+                   :validate [#(not (nil? %))]
                    ]
                   ["-p" "--prune" "Prune orphaned snaps" :default true
                    :flag true] 
                   ["-h" "--help" "Help" :default false :flag true]
                   )]
 
+    ;;print help banner
     (when (:help options)
       (println banner)
       (System/exit 0)
       )
 
-
     (log/info "Executing in account" (get_account_id))
+
     ;;set up the scheduler
     (qs/initialize)
     (qs/start)
