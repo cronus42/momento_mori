@@ -150,7 +150,7 @@
                    :parse-fn #(Integer. %)]
                   ["-r" "--region" "AWS Region" :default "us-west-2"
                    ]
-                  ["-p" "--prune" "Prune orphaned snaps" :default false 
+                  ["-p" "--prune" "Prune orphaned snaps" :default true
                    :flag true] 
                   ["-h" "--help" "Help" :default false :flag true]
                   )]
