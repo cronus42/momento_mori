@@ -144,7 +144,7 @@
   ;;parse opts
   (let  [[options args banner]
          (cli/cli args
-                  ["-d" "--days-old" "Maximum age of a snapshot" :default 60
+                  ["-d" "--days-old" "Maximum age of a snapshot" :default 5
                    :parse-fn #(Integer. %)]
                   ["-f" "--frequency" "Run frequency in minutes" :default 30
                    :parse-fn #(Integer. %)]
