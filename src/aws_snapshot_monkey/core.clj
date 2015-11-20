@@ -1,26 +1,25 @@
 (ns aws-snapshot-monkey.core
   (:gen-class)
   (:require [clj-time.core :as tm]
-            [clojure.tools.cli :as cli]
+            [clojure.tools.cli :refer [cli]]
             [clj-http.client :as http-client]
             [clojure.tools.logging :as log]
             [clojurewerkz.quartzite.scheduler :as qs]
-            [clojurewerkz.quartzite.jobs :as j]
             [clojurewerkz.quartzite.jobs :refer [defjob]]
+            [clojurewerkz.quartzite.jobs :as j]
             [clojurewerkz.quartzite.triggers :as t]
             [clojurewerkz.quartzite.schedule.calendar-interval :refer 
              [schedule with-interval-in-minutes]]
             [clojurewerkz.quartzite.conversion :as qc]
-            [amazonica.core :refer [with-credential defcredential]]
+            [amazonica.core :refer [with-credential defcredential ]]
+            [amazonica.aws.ec2 :refer 
+             [describe-images describe-snapshots describe-instances 
+              describe-volumes delete-snapshot create-snapshot]]
+            [robert.bruce :refer [try-try-again]]
+            [clojure.walk :refer [keywordize-keys]]
+            [clojure.set :refer [difference]]
+;;            [clojure.string :refer [split]]
             )
-  (:use [clj-time.coerce])
-  (:use [amazonica.aws.ec2])
-  (:use [amazonica.aws.identitymanagement])
-  (:use [clojure.string :only (split)])
-  (:use [clojure.pprint])
-  (:use [clojure.set])
-  (:use [clojure.walk])
-  (:use [robert.bruce :only [try-try-again]])
   )
 
 ;;TODO: specl testing
@@ -177,7 +176,7 @@
   "The main function"
   ;;parse opts
   (let  [[options args banner]
-         (cli/cli args
+         (cli args
                   ["-d" "--days-old" "Maximum age of a snapshot" :default 5
                    :parse-fn #(Integer. %)]
                   ["-f" "--frequency" "Run frequency in minutes" :default 30
