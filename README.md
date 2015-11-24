@@ -1,27 +1,23 @@
 # aws_snapshot_monkey
 
-This is a monkey whose job it is to make sure all active volumes have recent
-snapshots.
+This is an AWS lambda whose job it is to make sure all active volumes have 
+recent snapshots.
 
 ## Installation
 
 You need http://leiningen.org/
 
+lein uberjar && aws lambda update-function-code --function-name \
+aws-snapshot-monkey \
+--zip-file fileb://target/uberjar/aws_snapshot_monkey-0.1.0-SNAPSHOT-standalone.jar
+
 ## Usage
 
-    $ java -jar aws_snapshot_monkey-0.1.0-standalone.jar [args]
+Build with lein uberjar and upload to lambda
 
-    Switches                 Default  Desc                      
-    --------                 -------  ----                      
-    -d, --days-old           5        Maximum age of a snapshot 
-    -f, --frequency          30       Run frequency in minutes  
-    -r, --region             auto     AWS Region                
-    -p, --no-prune, --prune  true     Prune orphaned snaps      
-    -h, --no-help, --help    false    Help   
 
 ## Notes
 
-The region flag is necessary if you are not on an aws instance
 
 ### Bugs
 

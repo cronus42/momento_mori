@@ -1,55 +1,30 @@
 (ns aws-snapshot-monkey.core
   (:gen-class)
-  (:require [clj-time.core :as tm]
-            [clojure.tools.cli :refer [cli]]
-            [clj-http.client :as http-client]
-            [clojure.tools.logging :as log]
-            [clojurewerkz.quartzite.scheduler :as qs]
-            [clojurewerkz.quartzite.jobs :refer [defjob]]
-            [clojurewerkz.quartzite.jobs :as j]
-            [clojurewerkz.quartzite.triggers :as t]
-            [clojurewerkz.quartzite.schedule.calendar-interval :refer 
-             [schedule with-interval-in-minutes]]
-            [clojurewerkz.quartzite.conversion :as qc]
-            [amazonica.core :refer [with-credential defcredential ]]
-            [amazonica.aws.ec2 :refer 
-             [describe-images describe-snapshots describe-instances 
-              describe-volumes delete-snapshot create-snapshot]]
-            [robert.bruce :refer [try-try-again]]
-            [clojure.walk :refer [keywordize-keys]]
-            [clojure.set :refer [difference]]
-;;            [clojure.string :refer [split]]
-            )
-  )
+  (:require 
+    [uswitch.lambada.core :refer [deflambdafn]]
+    [clojure.data.json :as json]
+    [clojure.java.io :as io]
+    [clojure.tools.logging :as log]
+    [clj-time.core :as tm]
+    [clojure.tools.cli :refer [cli]]
+    [amazonica.core :refer [with-credential defcredential ]]
+    [amazonica.aws.ec2 :refer 
+     [describe-images describe-snapshots describe-instances 
+      describe-volumes delete-snapshot create-snapshot]]
+    [robert.bruce :refer [try-try-again]]
+    [clojure.walk :refer [keywordize-keys]]
+    [clojure.set :refer [difference]]
+    [clojure.pprint :refer [pprint]]
+    ;;            [clojure.string :refer [split]]
+    )) 
 
 ;;TODO: specl testing
-;;TODO: health check
-;;TODO: config for backup freq
 
 (defn handler [request]
   "handles http requests"
   {:status 200
    :headers {"Content-Type" "text/html"}
    :body "I am Snapshot Monkey!\n"})
-
-(defn get_region []
-  "queries the metadata api for the region"
-  (apply str
-         (drop-last
-           (:body
-             (http-client/get
-               "http://169.254.169.254/latest/meta-data/placement/availability-zone"
-               )))))
-
-(defn get_account_id [region]
-  "fetches the aws account id from describe-instances (hacky)"
-  ;alternate stupid method
-  ;((split (get-in (get-user) [:user :arn]) #":") 4)
-  (get 
-    (first 
-      (get 
-        (describe-instances {:endpoint region}) :reservations)) :owner-id)
-  )
 
 (defn derive_set [seqofhashes keytoget]
   "Turns a map into a set for a given key"
@@ -68,22 +43,21 @@
                          :owners ["self"]) :volumes)
   )
 
-(defn get_snapshots_for_volumes [region volumes]
+(defn get_snapshots_for_volumes [region account volumes]
   "fetch the snapshot-id's and volume-id's for given volumes"
   (flatten
     ;;aws will only accept 200 filter args at a time
-    (for [part (into [] (partition-all 190 volumes))]
+    (for [part (partition-all 190 volumes)]
       (map
         (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
         (get 
           (describe-snapshots {:endpoint region} 
-                              :filters [{:name "volume-id" :values part}
-                                        {:name "owner-id" :values 
-                                         [(get_account_id region)]}] )
-          :snapshots))
-      )))
+                              :filters 
+                              [{:name "volume-id" :values part}])
+                              :snapshots )
+        ))))
 
-(defn get_snapshots [region]
+(defn get_snapshots [region account]
   "fetch all the snapshots"
   (map
     (fn [m] (select-keys m [:snapshot-id :volume-id :start-time]))
@@ -91,8 +65,7 @@
       (describe-snapshots {:endpoint region}
                           :filters 
                           [{:name "owner-id"
-                            :values [
-                                     (get_account_id region)]}])
+                            :value account}])
       :snapshots)))
 
 (defn get_images [region]
@@ -105,7 +78,7 @@
 
 (defn prune_snapshots [region snapshots]
   "prune snapshots"
-  (log/debug "Deleting snapshots: " snapshots)
+  (println "Deleting snapshots: " snapshots)
   (map (fn [m] (try-try-again
                  delete-snapshot {:endpoint region} :snapshot-id m))
        snapshots
@@ -121,102 +94,78 @@
 
 (defn snapshot_volumes [region volumes]
   "snapshot a list of volumes"
-  (log/debug "Snapshotting volumes: " volumes)
+  (println "Snapshotting volumes: " volumes)
   (map (fn [m] (try-try-again 
                  create-snapshot {:endpoint region} 
                  :volume-id m :Description "Snapshot Monkey"))
        volumes
        ))
 
-(defjob snapshot_volumes_job [ctx]
-  (let [options (keywordize-keys (qc/from-job-data ctx))]
-    (log/info "Running scheduled job")
-    (def region
-      (if (= (:region options) "auto")
-        (get_region)
-        (:region options)
-        ))
-    (log/info "Executing in account" (get_account_id region))
-    (log/info "Executing in region" region)
-    (def volumes_in_use (derive_set 
-                          (get_volumes_in_use region) :volume-id))
-    (def snaps_in_use (get_snapshots_for_volumes 
-                        region volumes_in_use))
-    (def snaps_wo_vols (difference
-                         (derive_set 
-                           (get_snapshots region) :snapshot-id) 
-                         (derive_set snaps_in_use :snapshot-id)))
-    (def snaps_defunct
-      (difference snaps_wo_vols
-                  (into #{}
-                        (map #(get-in % [:ebs :snapshot-id])
-                             (flatten 
-                               (map 
-                                 #(get % :block-device-mappings) 
-                                 (get_images region)))))))
+(defn snapshot_volumes_handler [event-json]
+  (def event (keywordize-keys event-json))
+  (def region (:region event))
+  (println "Executing in region: " region)
+  (def account (:account event))
+  (println "Executing in account: " account)
+  (def days_ago 7)
+  (println "Maximum snapshot age: " days_ago)
+  (def mock (get-in event [:details :mock]))
+  (def volumes_in_use (derive_set 
+                        (get_volumes_in_use region) :volume-id))
+  (println "Volumes in use: " (count volumes_in_use))
+  (def snaps_in_use (get_snapshots_for_volumes 
+                      region account volumes_in_use ))
+  (println "Snapshots in use: " (count snaps_in_use))
+  (def snaps_wo_vols (difference
+                       (derive_set 
+                         (get_snapshots region account) :snapshot-id) 
+                       (derive_set snaps_in_use :snapshot-id)))
+  (def snaps_defunct
+    (difference snaps_wo_vols
+                (into #{}
+                      (map #(get-in % [:ebs :snapshot-id])
+                           (flatten 
+                             (map 
+                               #(get % :block-device-mappings) 
+                               (get_images region)))))))
 
-    (def vols_with_recent_snaps 
-      (into #{} 
-            (keys 
-              (group-by :volume-id 
-                        (filter_by_start_time 
-                          (:days-old options) snaps_in_use)))))
+  (def vols_with_recent_snaps 
+    (into #{} 
+          (keys 
+            (group-by :volume-id 
+                      (filter_by_start_time 
+                        days_ago snaps_in_use)))))
 
-    (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
-    (log/info "Found " (count vols_wo_snaps) " volumes to snapshot")
+  (println "Found volume(s) with recent snapshots: " 
+           (count vols_with_recent_snaps))
+  (def vols_wo_snaps (difference volumes_in_use vols_with_recent_snaps))
+  (println "Found " (count vols_wo_snaps) " volumes to snapshot")
+  (println "Found " (count snaps_defunct) " snapshots to delete")
+  (when-not mock
+    (println "Doing work:")
     (dorun (snapshot_volumes region vols_wo_snaps))
-    (when (:prune options)
-      (log/info "Found " (count snaps_defunct) " snapshots to delete")
-      (dorun (prune_snapshots region snaps_defunct))
-      )
-    (log/info "Run finished") 
-    ))
+    (dorun (prune_snapshots region snaps_defunct))
+    (println "Done")
+    )
+  )
+  
+;Lambada function example event
+;{
+;  "account": "123456789012",
+;  "region": "us-east-1",
+;  "detail": {},
+;  "detail-type": "Scheduled Event",
+;  "source": "aws.events",
+;  "time": "1970-01-01T00:00:00Z",
+;  "id": "cdc73f9d-aea9-11e3-9d5a-835b769c0d9c",
+;  "resources": [
+;    "arn:aws:events:us-east-1:123456789012:rule/my-schedule"
+;  ]
+;}
 
-(defn -main [& args]
-  "The main function"
-  ;;parse opts
-  (let  [[options args banner]
-         (cli args
-                  ["-d" "--days-old" "Maximum age of a snapshot" :default 5
-                   :parse-fn #(Integer. %)]
-                  ["-f" "--frequency" "Run frequency in minutes" :default 30
-                   :parse-fn #(Integer. %)]
-                  ["-r" "--region" "AWS Region" :default "auto"
-                   :validate [#(not (nil? %))]
-                   ]
-                  ["-p" "--prune" "Prune orphaned snaps" :default true
-                   :flag true] 
-                  ["-h" "--help" "Help" :default false :flag true]
-                  )]
-
-    ;;print help banner
-    (when (:help options)
-      (println banner)
-      (System/exit 0)
-      )
-
-
-    ;;set up the scheduler
-    (qs/initialize)
-    (qs/start)
-    (log/info "Starting snapshot job with frequency of " (:frequency options))
-    (let [job (j/build
-                ;;run this job
-                (j/of-type snapshot_volumes_job)
-                (j/using-job-data options)
-                ;;call it this
-                (j/with-identity (j/key "jobs.snapshot_volumes")))
-          trigger (t/build
-                    (t/with-identity (t/key "triggers.1"))
-                    (t/start-now)
-                    ;; do it every f minutes
-                    (t/with-schedule 
-                      (schedule
-                        (with-interval-in-minutes (:frequency options))
-                        )))]
-
-
-      (qs/schedule job trigger)
-      )
-
-    ))
+(deflambdafn com.cronus.momentomori [in out ctx]
+  (let [event (json/read (io/reader in))
+        res (snapshot_volumes_handler event)]
+    (with-open [w (io/writer out)]
+      (json/write res w)))
+  )
